@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ENAN Table Tennis</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #F8D153; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        canvas {
+            display: block;
+            cursor: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #scoreboard {
+            position: absolute;
+            top: 20px;
+            right: -120px;
+            background: white;
+            padding: 10px 20px;
+            border: 4px solid black;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .score-text { margin: 5px 0; }
+        
+        #watermark {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 100px;
+            font-weight: 900;
+            color: rgba(255, 255, 255, 0.15);
+            pointer-events: none;
+            letter-spacing: 10px;
+            z-index: 1;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+            color: white;
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 40px;
+            margin-bottom: 10px;
+            color: #F8D153;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            font-size: 18px;
+            font-weight: bold;
+            background: #F8D153;
+            color: black;
+            border: 4px solid black;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: transform 0.1s;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .diff-select {
+            margin-top: 15px;
+            font-size: 16px;
+        }
+
+        select {
+            padding: 5px;
+            font-size: 16px;
+            border: 2px solid black;
+            border-radius: 5px;
+        }
+        
+        #serve-hint {
+            position: absolute;
+            bottom: 20px;
+            color: rgba(0,0,0,0.5);
+            font-weight: bold;
+            font-size: 18px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+        <div id="watermark">ENAN</div>
+        <div id="ui-layer">
+            <div id="overlay">
+                <h1 id="screen-title">Table Tennis</h1>
+                <p id="screen-msg">First to 20 points wins!</p>
+                <div class="diff-select" id="diff-container">
+                    Difficulty: 
+                    <select id="difficulty">
+                        <option value="easy">Easy</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="hard">Hard</option>
+                    </select>
+                </div>
+                <button class="btn" id="start-btn">PLAY</button>
+            </div>
+        </div>
+        <div id="scoreboard">
+            <div class="score-text" style="color:#20A39E">BOT: <span id="bot-score">0</span></div>
+            <div class="score-text" style="color:#D84A68">ME: <span id="player-score">0</span></div>
+        </div>
+        <div id="serve-hint">Left Click to Serve!</div>
+    </div>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // UI Elements
+    const overlay = document.getElementById("overlay");
+    const startBtn = document.getElementById("start-btn");
+    const screenTitle = document.getElementById("screen-title");
+    const screenMsg = document.getElementById("screen-msg");
+    const diffContainer = document.getElementById("diff-container");
+    const diffSelect = document.getElementById("difficulty");
+    const playerScoreEl = document.getElementById("player-score");
+    const botScoreEl = document.getElementById("bot-score");
+    const serveHint = document.getElementById("serve-hint");
+
+    // Game Constants & Colors
+    const TABLE_COLOR = "#F77C65"; 
+    const LINE_COLOR = "#FFFFFF";
+    const BORDER_COLOR = "#000000";
+    const BORDER_WIDTH = 10;
+    
+    // Game State
+    let state = "START"; 
+    let score = { player: 0, bot: 0 };
+    const WIN_SCORE = 20;
+
+    // Bat Settings 
+    const BAT_RADIUS = 38; 
+    const HANDLE_WIDTH = 18;
+    const HANDLE_HEIGHT = 32;
+    const PLAYER_BAT_COLOR = "#D84A68"; 
+    const BOT_BAT_COLOR = "#20A39E";    
+    const HANDLE_COLOR = "#D49A6A";     
+
+    const player = {
+        x: canvas.width / 2,
+        y: canvas.height - 50,
+        lastX: canvas.width / 2,
+        vx: 0,
+        color: PLAYER_BAT_COLOR
+    };
+
+    const bot = {
+        x: canvas.width / 2,
+        y: 50,
+        lastX: canvas.width / 2,
+        vx: 0,
+        color: BOT_BAT_COLOR,
+        speed: 4 
+    };
+
+    // Ball Settings - INCREASED SPEED HERE
+    const ball = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        radius: 8,
+        speed: 5, // Was 3.5
+        dx: 0,
+        dy: 0,
+        spin: 0, 
+        color: "#FFFFFF",
+        trail: [] 
+    };
+
+    // Difficulty Settings - INCREASED MAX SPEEDS
+    const difficulties = {
+        easy: { botSpeed: 2.5, ballMaxSpeed: 7 },
+        medium: { botSpeed: 4.5, ballMaxSpeed: 9 },
+        hard: { botSpeed: 6.5, ballMaxSpeed: 11 }
+    };
+    let currentDiff = difficulties.medium;
+
+    // Mouse Tracking
+    let mouse = { x: canvas.width / 2, y: canvas.height - 50 };
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = e.clientX - rect.left;
+        mouse.y = e.clientY - rect.top;
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button === 0 && state === "SERVE") {
+            serveBall();
+        }
+    });
+
+    startBtn.addEventListener('click', () => {
+        const diffText = diffSelect.value;
+        currentDiff = difficulties[diffText];
+        bot.speed = currentDiff.botSpeed;
+        resetGame();
+        state = "SERVE";
+        prepareServe("player");
+        overlay.style.display = "none";
+    });
+
+    function drawTable() {
+        ctx.fillStyle = TABLE_COLOR;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = LINE_COLOR;
+        ctx.fillRect(0, canvas.height / 2 - 2, canvas.width, 4);
+
+        ctx.fillStyle = BORDER_COLOR;
+        ctx.fillRect(0, 0, canvas.width, BORDER_WIDTH); 
+        ctx.fillRect(0, canvas.height - BORDER_WIDTH, canvas.width, BORDER_WIDTH); 
+        ctx.fillRect(0, 0, BORDER_WIDTH, canvas.height); 
+        ctx.fillRect(canvas.width - BORDER_WIDTH, 0, BORDER_WIDTH, canvas.height); 
+    }
+
+    function drawBat(x, y, color, isPlayer) {
+        ctx.save();
+        ctx.translate(x, y);
+        
+        if (!isPlayer) {
+            ctx.rotate(Math.PI);
+        } else {
+            let tilt = (x - canvas.width/2) * 0.005;
+            ctx.rotate(tilt);
+        }
+
+        ctx.fillStyle = HANDLE_COLOR;
+        ctx.strokeStyle = BORDER_COLOR;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-HANDLE_WIDTH / 2, BAT_RADIUS - 5, HANDLE_WIDTH, HANDLE_HEIGHT, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(0, 0, BAT_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(0, 0, BAT_RADIUS - 6, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(0,0,0,0.2)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    function drawBall() {
+        for(let i = 0; i < ball.trail.length; i++) {
+            let point = ball.trail[i];
+            let opacity = i / ball.trail.length;
+            ctx.fillStyle = `rgba(255, 255, 255, ${opacity * 0.4})`;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, ball.radius * opacity, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.fillStyle = ball.color;
+        ctx.strokeStyle = BORDER_COLOR;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath();
+        ctx.arc(ball.x - 3, ball.y + 3, ball.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    function resetBall() {
+        ball.x = canvas.width / 2;
+        ball.y = canvas.height / 2;
+        ball.dx = 0;
+        ball.dy = 0;
+        ball.spin = 0;
+        ball.trail = [];
+    }
+
+    function prepareServe(server) {
+        state = "SERVE";
+        resetBall();
+        
+        if (server === "player") {
+            serveHint.style.display = "block";
+            ball.y = canvas.height - (BAT_RADIUS + 40);
+        } else {
+            serveHint.style.display = "none";
+            ball.y = BAT_RADIUS + 40;
+            setTimeout(() => {
+                if(state === "SERVE") {
+                    ball.dy = ball.speed;
+                    ball.dx = (Math.random() - 0.5) * 4;
+                    state = "PLAY";
+                }
+            }, 1000);
+        }
+    }
+
+    function serveBall() {
+        serveHint.style.display = "none";
+        ball.dy = -ball.speed;
+        ball.dx = (player.x - canvas.width / 2) * 0.05; 
+        state = "PLAY";
+    }
+
+    function updateScore(winner) {
+        if (winner === "player") {
+            score.player++;
+            playerScoreEl.innerText = score.player;
+        } else {
+            score.bot++;
+            botScoreEl.innerText = score.bot;
+        }
+
+        if (score.player >= WIN_SCORE || score.bot >= WIN_SCORE) {
+            endGame(winner);
+        } else {
+            prepareServe(winner === "player" ? "bot" : "player");
+        }
+    }
+
+    function endGame(winner) {
+        state = "END";
+        overlay.style.display = "flex";
+        diffContainer.style.display = "none";
+        startBtn.innerText = "RESTART";
+        
+        if (winner === "player") {
+            screenTitle.innerText = "YOU WON!";
+            screenTitle.style.color = "#28a745";
+        } else {
+            screenTitle.innerText = "BOT WON!";
+            screenTitle.style.color = "#dc3545";
+        }
+        screenMsg.innerText = `Final Score: ${score.player} - ${score.bot}`;
+    }
+
+    function resetGame() {
+        score.player = 0;
+        score.bot = 0;
+        playerScoreEl.innerText = "0";
+        botScoreEl.innerText = "0";
+    }
+
+    function checkBatCollision(bX, bY, batX, batY) {
+        let dx = bX - batX;
+        let dy = bY - batY;
+        let distance = Math.sqrt(dx * dx + dy * dy);
+        return distance < ball.radius + BAT_RADIUS;
+    }
+
+    function update() {
+        if (state !== "PLAY" && state !== "SERVE") return;
+
+        player.vx = mouse.x - player.lastX;
+        player.lastX = player.x;
+
+        bot.vx = bot.x - bot.lastX;
+        bot.lastX = bot.x;
+
+        player.x = mouse.x;
+        player.y = mouse.y;
+        
+        if (player.x < BORDER_WIDTH + BAT_RADIUS) player.x = BORDER_WIDTH + BAT_RADIUS;
+        if (player.x > canvas.width - BORDER_WIDTH - BAT_RADIUS) player.x = canvas.width - BORDER_WIDTH - BAT_RADIUS;
+        if (player.y < canvas.height / 2 + BAT_RADIUS) player.y = canvas.height / 2 + BAT_RADIUS; 
+        if (player.y > canvas.height - BAT_RADIUS) player.y = canvas.height - BAT_RADIUS;
+
+        if (state === "SERVE") {
+            if (serveHint.style.display === "block") {
+                ball.x = player.x;
+                ball.y = player.y - BAT_RADIUS - 15;
+            } else {
+                ball.x = bot.x;
+            }
+        }
+
+        if (state === "PLAY") {
+            ball.dx += ball.spin * 0.05;
+            ball.spin *= 0.98; 
+
+            ball.x += ball.dx;
+            ball.y += ball.dy;
+
+            ball.trail.push({x: ball.x, y: ball.y});
+            if (ball.trail.length > 10) {
+                ball.trail.shift();
+            }
+
+            if (ball.x - ball.radius < BORDER_WIDTH || ball.x + ball.radius > canvas.width - BORDER_WIDTH) {
+                ball.dx *= -1;
+                ball.spin *= -0.5; 
+                if (ball.x < canvas.width/2) ball.x = BORDER_WIDTH + ball.radius;
+                else ball.x = canvas.width - BORDER_WIDTH - ball.radius;
+            }
+
+            if (ball.y < 0) updateScore("player");
+            else if (ball.y > canvas.height) updateScore("bot");
+
+            if (checkBatCollision(ball.x, ball.y, player.x, player.y)) {
+                let collidePoint = ball.x - player.x;
+                collidePoint = collidePoint / (BAT_RADIUS); 
+                let angleRad = (Math.PI/3) * collidePoint; 
+                
+                ball.dx = ball.speed * Math.sin(angleRad);
+                ball.dy = -1 * ball.speed * Math.cos(angleRad);
+                
+                ball.spin = player.vx * 0.15;
+                
+                if(ball.speed < currentDiff.ballMaxSpeed) ball.speed += 0.3;
+                
+                ball.y = player.y - BAT_RADIUS - ball.radius - 1;
+            }
+
+            if (checkBatCollision(ball.x, ball.y, bot.x, bot.y)) {
+                let collidePoint = ball.x - bot.x;
+                collidePoint = collidePoint / (BAT_RADIUS); 
+                let angleRad = (Math.PI/3) * collidePoint; 
+                
+                ball.dx = ball.speed * Math.sin(angleRad);
+                ball.dy = 1 * ball.speed * Math.cos(angleRad);
+                
+                ball.spin = bot.vx * 0.15;
+                ball.y = bot.y + BAT_RADIUS + ball.radius + 1;
+            }
+
+            let botTargetX = ball.x;
+            if (ball.dy < 0) { 
+                botTargetX += (ball.dx * 10) + (Math.random() - 0.5) * 15; 
+                if (bot.x < botTargetX - 5) bot.x += bot.speed;
+                else if (bot.x > botTargetX + 5) bot.x -= bot.speed;
+            } else { 
+                if (bot.x < canvas.width/2 - 5) bot.x += (bot.speed * 0.5);
+                else if (bot.x > canvas.width/2 + 5) bot.x -= (bot.speed * 0.5);
+            }
+
+            if (bot.x < BORDER_WIDTH + BAT_RADIUS) bot.x = BORDER_WIDTH + BAT_RADIUS;
+            if (bot.x > canvas.width - BORDER_WIDTH - BAT_RADIUS) bot.x = canvas.width - BORDER_WIDTH - BAT_RADIUS;
+            bot.y = 50; 
+        }
+    }
+
+    function draw() {
+        drawTable();
+        drawBat(bot.x, bot.y, bot.color, false);
+        drawBat(player.x, player.y, player.color, true);
+        drawBall();
+    }
+
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    loop();
+
+</script>
+</body>
+</html>
